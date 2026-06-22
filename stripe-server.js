@@ -16,9 +16,14 @@ require('dotenv').config();
 const express  = require('express');
 const Stripe   = require('stripe');
 const cors     = require('cors');
+const sgMail   = require('@sendgrid/mail');
 
 const app    = express();
 const stripe = Stripe(process.env.STRIPE_SECRET_KEY);
+
+if (process.env.SENDGRID_API_KEY) {
+  sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+}
 
 /* ── MIDDLEWARE ── */
 // Raw body needed for Stripe webhook signature verification
@@ -78,8 +83,13 @@ app.post('/create-subscription', async (req, res) => {
       });
     }
 
-    /* 5. Send welcome email (add your email provider here) */
-    // await sendWelcomeEmail(email, name); // see bottom of file
+    /* 5. Send welcome email with Pro download link */
+    try {
+      await sendWelcomeEmail(email, name);
+    } catch (emailErr) {
+      console.error('Welcome email failed to send:', emailErr.message);
+      // Don't fail the whole request just because the email failed
+    }
 
     res.json({
       subscriptionId: subscription.id,
@@ -185,22 +195,36 @@ app.listen(PORT, () => {
   console.log(`FinLeaf server running on http://localhost:${PORT}`);
 });
 
-/*
- * ── OPTIONAL: SEND WELCOME EMAIL ──────────────────────────────────
- * Uncomment and install your preferred email provider:
- *   npm install @sendgrid/mail       (SendGrid — recommended)
- *   npm install nodemailer           (SMTP / Gmail)
- *
- * async function sendWelcomeEmail(email, name) {
- *   const sgMail = require('@sendgrid/mail');
- *   sgMail.setApiKey(process.env.SENDGRID_API_KEY);
- *   await sgMail.send({
- *     to: email,
- *     from: 'hello@finleaf.ca',
- *     subject: 'Welcome to FinLeaf Pro!',
- *     html: `<h2>Hi ${name},</h2>
- *            <p>Your 7-day free trial has started. Download your templates here:</p>
- *            <a href="${process.env.PRO_DOWNLOAD_URL}">Download Pro Templates →</a>`
- *   });
- * }
- */
+/* ================================================================
+   EMAIL — Welcome email sent immediately after a successful
+   subscription signup. Uses SendGrid (free tier: 100 emails/day).
+================================================================ */
+async function sendWelcomeEmail(email, name) {
+  if (!process.env.SENDGRID_API_KEY) {
+    console.warn('SENDGRID_API_KEY not set — skipping welcome email.');
+    return;
+  }
+
+  const downloadUrl = process.env.PRO_DOWNLOAD_URL || '#';
+
+  await sgMail.send({
+    to: email,
+    from: process.env.SENDER_EMAIL || 'hello@finleaf.ca', // must match your SendGrid verified sender
+    subject: 'Welcome to FinLeaf Pro! 🎉 Here are your templates',
+    html: `
+      <div style="font-family: Arial, sans-serif; max-width: 480px; margin: 0 auto; color: #212529;">
+        <h2 style="color: #185FA5;">Welcome to FinLeaf Pro, ${name}! 🎉</h2>
+        <p>Your 7-day free trial has started. You now have access to the full template library — P&L, invoicing, GST/HST, payroll, cash flow, and budget planning.</p>
+        <p style="margin: 28px 0;">
+          <a href="${downloadUrl}" style="background:#185FA5; color:#fff; padding:12px 24px; border-radius:8px; text-decoration:none; font-weight:bold;">
+            Download Your Pro Templates →
+          </a>
+        </p>
+        <p>Questions? Just reply to this email — we read every message.</p>
+        <p style="color:#868E96; font-size:13px; margin-top:32px;">— The FinLeaf Team</p>
+      </div>
+    `
+  });
+
+  console.log(`Welcome email sent to ${email}`);
+}
